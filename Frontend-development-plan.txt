@@ -1,0 +1,324 @@
+# Streamlit Frontend - How I'll Build the UI
+
+## App Structure - Multi-Page Setup
+
+```
+Main App (streamlit_app.py)
+├── Home - Landing page with overview
+├── Upload Documents - Upload JSON chunks
+├── Search & Chat - Ask questions and search
+└── Analytics - See popular articles and stats
+```
+
+## Main App Flow
+
+### Home Page (streamlit_app.py)
+**What users see first:**
+
+```
+SHOW welcome message and instructions
+DISPLAY quick stats:
+    - How many documents we have
+    - Total chunks processed
+    - Most popular articles this week
+
+PROVIDE navigation:
+    - Big buttons to go to Upload or Search
+    - Quick search box for immediate queries
+    - Recent activity feed
+
+EXPLAIN how it works:
+    - "Upload research papers → Ask questions → Get answers with citations"
+    - Show example queries that work well
+```
+
+### Upload Page (pages/1_📤_Upload_Documents.py)
+**For uploading new research papers:**
+
+```
+CREATE file uploader:
+    - Accept JSON files with the chunk format
+    - Show preview of what we'll process
+    - Validate the format before sending
+
+WHEN user uploads file:
+    - Show progress bar while processing
+    - Call our PUT /api/upload endpoint
+    - Display results (how many chunks processed)
+    - Show any errors in a friendly way
+
+ALSO allow manual chunk entry:
+    - Text area for pasting JSON
+    - Form fields for individual chunks
+    - Helpful examples and templates
+```
+
+### Search & Chat Page (pages/2_🔍_Search_Articles.py)
+**The main interaction page:**
+
+```
+CREATE chat interface:
+    - Big search box at the top
+    - Chat history showing Q&A pairs
+    - Each answer shows citations clearly
+
+WHEN user asks a question:
+    - Show "thinking..." spinner
+    - Call POST /api/similarity_search with generate_answer=true
+    - Display the AI answer in a nice format
+    - Show source chunks in expandable sections
+    - Add citations with links back to full articles
+
+ALSO show advanced options:
+    - Adjust number of results (k parameter)
+    - Set minimum similarity score
+    - Filter by journal or year
+    - Toggle AI answer generation on/off
+
+DISPLAY search results:
+    - Each chunk in its own card
+    - Show similarity score as progress bar
+    - Highlight the section and source journal
+    - Click to view full document
+```
+
+### Analytics Page (pages/3_📊_Analytics.py)
+**See what's popular and trending:**
+
+```
+SHOW overview stats:
+    - Total documents and chunks
+    - Most searched topics this week
+    - Most cited papers
+    - Upload activity over time
+
+CREATE interactive charts:
+    - Bar chart of most popular journals
+    - Line chart of search activity
+    - Word cloud of common search terms
+    - Heatmap of usage by document section
+
+PROVIDE filtering options:
+    - Date range picker
+    - Journal filter dropdown
+    - Search term analysis
+```
+
+## Component Design
+
+### Chat Interface Component
+```python
+def render_chat_interface():
+    """The main Q&A interface"""
+    
+    INITIALIZE session state:
+        - Chat history list
+        - Current search results
+        - User preferences
+    
+    CREATE input section:
+        - Text input for questions
+        - Submit button
+        - Advanced options in sidebar
+    
+    WHEN user submits question:
+        - Add question to chat history
+        - Show loading spinner
+        - Call search API
+        - Add response to chat history
+        - Scroll to bottom
+    
+    DISPLAY chat history:
+        - User questions in blue bubbles
+        - AI answers in gray bubbles
+        - Citations as clickable links
+        - Expandable "View Sources" sections
+```
+
+### Search Results Component
+```python
+def render_search_results(results):
+    """Display search results in a nice format"""
+    
+    FOR each result:
+        CREATE card with:
+            - Similarity score as colored bar
+            - Source document name
+            - Section heading
+            - Text preview (first 200 chars)
+            - Click to expand full text
+            - "View Full Document" button
+        
+        STYLE based on score:
+            - Green border for high similarity (>0.8)
+            - Yellow for medium (0.5-0.8)
+            - Gray for lower matches
+```
+
+### Upload Interface Component
+```python
+def render_upload_interface():
+    """Handle file uploads and manual entry"""
+    
+    CREATE tabs:
+        - "Upload JSON File"
+        - "Paste JSON"
+        - "Manual Entry"
+    
+    FOR file upload:
+        - Drag and drop area
+        - File validation
+        - Preview before upload
+        - Progress tracking
+    
+    FOR manual entry:
+        - Form fields for each chunk property
+        - Template examples
+        - Validation feedback
+```
+
+## API Integration
+
+### API Client Helper
+```python
+class APIClient:
+    """Handle all API calls to our FastAPI backend"""
+    
+    def __init__(self, base_url="http://localhost:8000"):
+        self.base_url = base_url
+    
+    def upload_chunks(self, chunks_data):
+        """Upload chunks to the API"""
+        SEND PUT request to /api/upload
+        HANDLE errors gracefully
+        RETURN status and message
+    
+    def search_articles(self, query, k=10, min_score=0.25, generate_answer=True):
+        """Search for articles"""
+        SEND POST request to /api/similarity_search
+        PARSE response into structured format
+        RETURN results and answer
+    
+    def get_journal(self, journal_id):
+        """Get full journal document"""
+        SEND GET request to /api/{journal_id}
+        RETURN document info and chunks
+```
+
+### Session State Management
+```python
+def initialize_session_state():
+    """Set up Streamlit session state"""
+    
+    IF 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    
+    IF 'search_results' not in st.session_state:
+        st.session_state.search_results = []
+    
+    IF 'user_preferences' not in st.session_state:
+        st.session_state.user_preferences = {
+            'k': 10,
+            'min_score': 0.25,
+            'generate_answer': True
+        }
+```
+
+## UI/UX Design Choices
+
+### Color Scheme & Styling
+```
+PRIMARY COLORS:
+    - Blue (#1f77b4) for user messages and primary actions
+    - Gray (#7f7f7f) for AI responses and secondary text
+    - Green (#2ca02c) for success states and high similarity
+    - Orange (#ff7f0e) for warnings and medium similarity
+    - Red (#d62728) for errors and low similarity
+
+TYPOGRAPHY:
+    - Headers: Clean sans-serif, good hierarchy
+    - Body text: Readable font size (14px+)
+    - Code/JSON: Monospace font with syntax highlighting
+
+LAYOUT:
+    - Sidebar for navigation and settings
+    - Main content area with good white space
+    - Cards for individual results
+    - Progress bars for loading states
+```
+
+### User Experience Flow
+```
+NEW USER JOURNEY:
+    1. Land on home page → see overview and examples
+    2. Try a sample search → see how it works
+    3. Upload their own documents → get familiar with format
+    4. Start using for real research → become power user
+
+POWER USER JOURNEY:
+    1. Upload new papers regularly
+    2. Use advanced search options
+    3. Check analytics for insights
+    4. Share results with colleagues
+```
+
+### Error Handling in UI
+```
+FOR API errors:
+    - Show friendly error messages
+    - Suggest what user can try
+    - Don't show technical details
+    - Provide "try again" buttons
+
+FOR validation errors:
+    - Highlight problematic fields
+    - Show inline error messages
+    - Prevent form submission until fixed
+    - Give examples of correct format
+
+FOR loading states:
+    - Show progress bars where possible
+    - Display "what's happening now" messages
+    - Allow users to cancel long operations
+    - Keep interface responsive
+```
+
+## Testing Strategy for Frontend
+
+### Manual Testing Checklist
+```
+UPLOAD FUNCTIONALITY:
+    ✓ Upload valid JSON file
+    ✓ Upload invalid JSON (should show error)
+    ✓ Upload very large file (should handle gracefully)
+    ✓ Manual entry with all fields
+    ✓ Manual entry with missing fields
+
+SEARCH FUNCTIONALITY:
+    ✓ Simple text queries
+    ✓ Complex multi-word queries
+    ✓ Queries with no results
+    ✓ Advanced filtering options
+    ✓ Answer generation toggle
+
+NAVIGATION:
+    ✓ All page links work
+    ✓ Browser back/forward buttons
+    ✓ Responsive design on mobile
+    ✓ Keyboard navigation
+```
+
+### Performance Considerations
+```
+FOR LARGE DATASETS:
+    - Paginate search results (don't show 1000+ at once)
+    - Use caching for repeated API calls
+    - Show loading states for slow operations
+    - Implement virtual scrolling for long lists
+
+FOR RESPONSIVENESS:
+    - Test on different screen sizes
+    - Make sure touch targets are big enough
+    - Ensure text is readable on mobile
+    - Keep important actions visible
+```

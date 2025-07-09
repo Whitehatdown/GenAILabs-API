@@ -1,0 +1,241 @@
+# API Implementation Pseudocode - How I Plan to Build This Thing
+
+## Overall System Flow - The Big Picture
+
+```
+User uploads documents → FastAPI processes them → Store in Chroma DB
+User asks questions → Search Chroma → Get relevant chunks → Ask GPT for answer
+User wants specific journal → Look it up → Return all chunks + stats
+```
+
+## 1. Upload API - PUT /api/upload
+
+**What this does:** Takes a bunch of journal chunks and stores them so we can search later
+
+**The plan:**
+```
+WHEN user sends JSON with chunks:
+    FIRST check if the data looks right
+        - Make sure all required fields are there
+        - Validate the schema version
+        - If something's wrong, tell them what's up
+    
+    THEN clean up the chunks
+        - Fix any weird text formatting
+        - Add default values for missing stuff
+        - Skip any chunks that are totally broken
+    
+    NEXT generate embeddings for each chunk
+        - Take the text from each chunk
+        - Send it to OpenAI to get the vector representation
+        - Do this in batches so we don't hit rate limits
+        - If OpenAI fails, try again a few times
+    
+    THEN store everything in Chroma
+        - Put the text, embeddings, and metadata together
+        - Make sure each chunk has a unique ID
+        - Store metadata like journal name, year, section, etc.
+    
+    ALSO save basic info in SQLite
+        - Keep track of which documents we have
+        - Store usage counts and timestamps
+        - This makes lookups faster later
+    
+    FINALLY tell the user what happened
+        - How many chunks we processed
+        - If anything went wrong
+        - Return status 202 (accepted) since this might take a while
+```
+
+## 2. Search API - POST /api/similarity_search
+
+**What this does:** User asks a question, we find relevant chunks and maybe generate an answer
+
+**The plan:**
+```
+WHEN user sends a search query:
+    FIRST validate the request
+        - Make sure query isn't empty or too short
+        - Check k value isn't crazy high
+        - Set reasonable defaults for missing params
+    
+    THEN turn the query into an embedding
+        - Use same OpenAI model as we used for chunks
+        - This gives us a vector to compare against stored chunks
+    
+    NEXT search Chroma for similar chunks
+        - Use cosine similarity to find matches
+        - Get back the most similar chunks with their scores
+        - Filter out anything below the minimum score threshold
+        - Sort by similarity score (highest first)
+    
+    MEANWHILE update usage stats
+        - Increment the usage_count for each returned chunk
+        - Track when it was last accessed
+        - Do this in both Chroma and SQLite
+    
+    IF user wants an AI-generated answer:
+        - Take the top search results as context
+        - Build a prompt with the question + relevant chunks
+        - Ask GPT-4 to write a comprehensive answer
+        - Extract citations from the response
+        - Include this in the response
+    
+    FINALLY return everything
+        - List of matching chunks with scores
+        - Generated answer (if requested)
+        - Citations and source info
+        - How long the search took
+```
+
+## 3. Journal API - GET /api/{journal_id}
+
+**What this does:** Get everything we know about a specific journal document
+
+**The plan:**
+```
+WHEN user requests a specific journal:
+    FIRST check if we actually have it
+        - Look up the journal_id in our SQLite database
+        - If we don't have it, return 404 with helpful message
+    
+    THEN get all chunks for this document
+        - Query Chroma using the source_doc_id filter
+        - Get back all chunks that belong to this journal
+        - Sort them by chunk_index so they're in the right order
+    
+    ALSO calculate some interesting stats
+        - Total number of chunks
+        - How many times each section has been viewed
+        - Which section is most popular
+        - Find other documents that are similar to this one
+    
+    PLUS update access tracking
+        - Record that someone viewed this document
+        - Update the last_accessed timestamp
+        - This helps us see which documents are popular
+    
+    FINALLY package everything together
+        - Document metadata (title, journal, year, etc.)
+        - All chunks in order with their content
+        - Usage analytics and statistics
+        - List of related documents user might like
+```
+
+## Services Layer - The Helper Functions
+
+### Embedding Service
+**What it does:** Handles all the OpenAI embedding stuff
+
+```
+CREATE embeddings for text:
+    - Clean up the text (remove weird characters, fix spacing)
+    - Send to OpenAI API in batches
+    - Handle rate limits and retries
+    - Return list of embedding vectors
+    
+HANDLE errors gracefully:
+    - If OpenAI is down, try again with backoff
+    - If text is too long, chunk it smaller
+    - Log everything so we can debug later
+```
+
+### Vector Database Service
+**What it does:** All the Chroma database operations
+
+```
+SETUP Chroma:
+    - Create persistent client (so data survives restarts)
+    - Get or create our collection
+    - Set up metadata schema
+    
+STORE chunks:
+    - Add documents with embeddings and metadata
+    - Handle duplicate IDs gracefully
+    - Make sure everything is indexed properly
+    
+SEARCH for similar content:
+    - Take query embedding and find nearest neighbors
+    - Filter by metadata if needed (journal, year, etc.)
+    - Return results with similarity scores
+```
+
+### LLM Service
+**What it does:** Generate answers using GPT
+
+```
+GENERATE answer from context:
+    - Take user question + relevant chunks
+    - Build a good prompt that asks for citations
+    - Call GPT-4 with reasonable temperature
+    - Parse the response to extract citations
+    - Return structured answer with source references
+    
+MAKE the prompt effective:
+    - Give clear instructions about citation format
+    - Provide enough context but not too much
+    - Ask for specific, accurate answers
+    - Tell it to say "I don't know" if context doesn't help
+```
+
+## Error Handling Strategy
+
+**The philosophy:** Fail gracefully and give helpful error messages
+
+```
+FOR validation errors:
+    - Tell user exactly what's wrong with their input
+    - Give examples of correct format
+    - Return 422 status with clear message
+
+FOR external service failures (OpenAI, etc.):
+    - Retry with exponential backoff
+    - Fall back to cached responses if possible
+    - Return 503 with "try again later" message
+
+FOR database issues:
+    - Log the full error for debugging
+    - Return generic 500 error to user
+    - Don't expose internal details
+
+FOR partial failures:
+    - Process what we can
+    - Tell user what worked and what didn't
+    - Let them decide if they want to retry
+```
+
+## Data Flow Examples
+
+### Happy Path - Upload
+```
+User: "Here's 50 chunks from a mucuna paper"
+API: "Cool, let me process these..."
+  → Clean the text
+  → Generate 50 embeddings via OpenAI
+  → Store in Chroma with metadata
+  → Update SQLite with document info
+API: "Done! Processed 50 chunks successfully"
+```
+
+### Happy Path - Search
+```
+User: "What are the benefits of mucuna pruriens?"
+API: "Let me search for that..."
+  → Generate embedding for the question
+  → Search Chroma for similar chunks
+  → Find 8 relevant chunks about mucuna benefits
+  → Ask GPT to summarize with citations
+API: "Here's what I found + here's a summary with sources"
+```
+
+### Sad Path - Something Goes Wrong
+```
+User: "Search for benefits of XYZ"
+API: "Searching..."
+  → Generate embedding ✓
+  → Search Chroma ✓
+  → Try to call GPT for answer ✗ (OpenAI is down)
+API: "Here are the search results, but I couldn't generate a summary right now. The search results should still be helpful!"
+```
+
+This approach keeps things working even when parts fail, which is super important for a good user experience.
